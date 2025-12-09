@@ -240,10 +240,9 @@ pub async fn get_dogma_attribute(
 
 pub async fn get_type(
     http_client: &RatelimitedClient,
-    type_id: TypeId,
+    type_id: i32,
 ) -> Result<ItemType, EsiError> {
     println!("============7");
-
     let url = format!("https://esi.evetech.net/latest/universe/types/{type_id}/");
     println!("calling url {url}");
 

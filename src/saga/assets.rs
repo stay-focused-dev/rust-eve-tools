@@ -241,7 +241,7 @@ impl SagaProcessor for AssetsSagaProcessor {
                     &context.http_client,
                     &character_client.oauth_token,
                     *character_id,
-                    item_ids,
+                    &item_ids.iter().copied().map(Into::into).collect::<Vec<i64>>(),
                 )
                 .await
                 .map_err(|e| AssetsError::EsiError(e.to_string()))?;
@@ -263,8 +263,8 @@ impl SagaProcessor for AssetsSagaProcessor {
                     None => {
                         let dynamic = esi::get_dynamic_item_attributes(
                             &context.http_client,
-                            *item_id,
-                            *type_id,
+                            (*item_id).into(),
+                            (*type_id).into(),
                         )
                         .await
                         .map_err(|e| AssetsError::EsiError(e.to_string()))?;
@@ -286,7 +286,7 @@ impl SagaProcessor for AssetsSagaProcessor {
             }
             AssetsWorkType::GetType { type_id } => {
                 let cached_item_type = {
-                    let type_ids = vec![*type_id];
+                    let type_ids = vec![(*type_id).into()];
                     let mut res = sde::get_types_by_ids(&context.sde_pool, &type_ids)
                         .await
                         .map_err(|e| AssetsError::SdeError(e.to_string()))?;
@@ -298,7 +298,7 @@ impl SagaProcessor for AssetsSagaProcessor {
                         println!("found type in sde: {}", type_id);
                         item_type
                     }
-                    None => esi::get_type(&context.http_client, *type_id)
+                    None => esi::get_type(&context.http_client, (*type_id).into())
                         .await
                         .map_err(|e| AssetsError::EsiError(e.to_string()))?,
                 };

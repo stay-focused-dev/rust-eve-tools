@@ -195,7 +195,7 @@ impl CharacterAssets {
 
         while depth < MAX_DEPTH {
             // Try to find the parent asset/container
-            if let Some(parent_asset) = assets.get(&(current_location_id as ItemId)) {
+            if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
                 // Get the name of this container/ship
                 let name = asset_names
                     .get(&parent_asset.item_id)
@@ -935,7 +935,7 @@ impl CharacterAssetsDb {
         let mut depth = 0;
         const MAX_DEPTH: u32 = 10;
         while depth < MAX_DEPTH {
-            if let Some(parent_asset) = assets.get(&(current_location_id as ItemId)) {
+            if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
                 let name = asset_names
                     .get(&parent_asset.item_id)
                     .cloned()

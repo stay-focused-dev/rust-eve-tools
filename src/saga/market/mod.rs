@@ -123,6 +123,8 @@ impl MarketResolutionSaga {
                 ];
 
                 for (region_id, type_id, page) in data {
+                    let type_id = type_id.into();
+                    
                     self.market_orders_buy_queue.insert(WorkItem {
                         id: Uuid::new_v4(),
                         work_type: WorkType::MarketOrderBuy {

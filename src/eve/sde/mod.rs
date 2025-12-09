@@ -32,7 +32,7 @@ pub async fn get_abyssal_modules(pool: &SqlitePool) -> Result<Vec<i32>> {
 
 pub async fn get_types_by_ids(
     pool: &SqlitePool,
-    type_ids: &[TypeId],
+    type_ids: &[i32],
 ) -> Result<Vec<ItemType>, sqlx::Error> {
     if type_ids.is_empty() {
         return Ok(vec![]);
@@ -77,11 +77,11 @@ pub async fn get_types_by_ids(
     let mut types_map: HashMap<TypeId, ItemType> = HashMap::new();
 
     for row in rows {
-        let type_id: TypeId = row.get("typeID");
+        let type_id: i32 = row.get("typeID");
 
         // Get or create the ItemType
-        let item_type = types_map.entry(type_id).or_insert_with(|| ItemType {
-            type_id,
+        let item_type = types_map.entry(type_id.into()).or_insert_with(|| ItemType {
+            type_id: type_id.into(),
             name: row.get("typeName"),
             description: row
                 .get::<Option<String>, _>("typeDescription")
@@ -116,7 +116,7 @@ pub async fn get_types_by_ids(
     // Convert HashMap to Vec, maintaining the original order of type_ids
     let mut result = Vec::new();
     for &type_id in type_ids {
-        if let Some(item_type) = types_map.remove(&type_id) {
+        if let Some(item_type) = types_map.remove(&type_id.into()) {
             result.push(item_type);
         }
     }
@@ -225,7 +225,8 @@ pub async fn get_market_groups_by_ids(
             if let Some(type_ids_str) = row.get::<Option<String>, _>("type_ids") {
                 type_ids_str
                     .split(',')
-                    .filter_map(|s| s.trim().parse().ok())
+                    .filter_map(|s| s.trim().parse::<i32>().ok())
+                    .map(TypeId::from)
                     .collect()
             } else {
                 vec![]

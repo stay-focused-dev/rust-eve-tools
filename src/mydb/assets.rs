@@ -93,7 +93,7 @@ impl AssetsDb {
     }
 
     pub fn add(&mut self, item: AssetItem) {
-        self.db.insert(item.item_id, item);
+        self.db.insert(item.item_id.into(), item);
         self.last_updated_at = Utc::now();
     }
 

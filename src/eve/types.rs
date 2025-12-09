@@ -1,8 +1,51 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub type CharacterId = u64;
-pub type ItemId = i64;
-pub type TypeId = i32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ItemId(i64);
+
+impl fmt::Display for ItemId {
+
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ItemId({})", self.0)
+    }
+}
+
+impl From<i64> for ItemId {
+    fn from(id: i64) -> Self {
+        ItemId(id)
+    }
+}
+
+impl From<ItemId> for i64 {
+    fn from(id: ItemId) -> Self {
+        id.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TypeId(i32);
+impl fmt::Display for TypeId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "TypeId({})", self.0)
+    }
+}
+
+impl From<i32> for TypeId {
+    fn from(id: i32) -> Self {
+        TypeId(id)
+    }
+}
+
+impl From<TypeId> for i32 {
+    fn from(id: TypeId) -> Self {
+        id.0
+    }
+}
 pub type RegionId = i64;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -33,8 +76,8 @@ pub struct DynamicItem {
     pub created_by: i64,
     pub dogma_attributes: Vec<DogmaAttributeConcise>,
     pub dogma_effects: Vec<DogmaEffect>,
-    pub mutator_type_id: i32,
-    pub source_type_id: i32,
+    pub mutator_type_id: TypeId,
+    pub source_type_id: TypeId,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -59,8 +102,8 @@ pub struct CharacterResponse {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct AssetItem {
-    pub item_id: i64,
-    pub type_id: i32,
+    pub item_id: ItemId,
+    pub type_id: TypeId,
     pub location_id: i64,
     pub location_type: String,
     pub quantity: i32,
@@ -71,7 +114,7 @@ pub struct AssetItem {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AssetName {
-    pub item_id: i64,
+    pub item_id: ItemId,
     pub name: String,
 }
 

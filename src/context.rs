@@ -40,6 +40,7 @@ impl AppContext {
     ) -> anyhow::Result<Self> {
         let sde_pool = crate::eve::sde::create_conn_pool(sde_path).await?;
         let abyssal_items = crate::eve::sde::get_abyssal_modules(&sde_pool).await?;
+        let abyssal_items = abyssal_items.iter().copied().map(Into::into).collect();
 
         let dynamics_db = RwLock::new(DynamicsDb::from_dir(data_dir)?);
         let assets_db = RwLock::new(AllAssetsDb::from_dir(data_dir)?);
