@@ -20,32 +20,32 @@ pub struct DynamicsReport {
 #[derive(Serialize)]
 pub struct ResultingGroup {
     pub source_mutator_groups: Vec<SourceMutatorGroup>,
-    pub base_types: BTreeMap<TypeId, BaseItemType>,
-    pub mutators: BTreeMap<TypeId, MutatorConcise>,
-    pub varying_attributes: BTreeMap<DogmaAttributeId, VaryingAttribute>,
-    pub min_max_attributes: BTreeMap<DogmaAttributeId, AttributeRange>,
+    pub base_types: Vec<BaseItemType>,
+    pub mutators: Vec<MutatorConcise>,
+    pub varying_attributes: Vec<VaryingAttribute>,
+    pub min_max_attributes: Vec<AttributeRange>,
 }
 
 #[derive(Serialize)]
 pub struct SourceMutatorGroup {
     pub source_type_id: TypeId,
     pub mutator_type_id: TypeId,
-    pub attributes: BTreeMap<DogmaAttributeId, AttributeRange>,
-    pub dynamics: BTreeMap<ItemId, DynamicItemData>,
+    pub attributes: Vec<AttributeRange>,
+    pub dynamics: Vec<DynamicItemData>,
 }
 
 #[derive(Serialize)]
 pub struct MutatorConcise {
     pub id: TypeId,
     pub name: String,
-    pub attributes: BTreeMap<DogmaAttributeId, AttributeRange>,
+    pub attributes: Vec<AttributeRange>,
 }
 
 #[derive(Serialize)]
 pub struct BaseItemType {
     pub id: TypeId,
     pub name: String,
-    pub attributes: BTreeMap<DogmaAttributeId, AttributeValue>,
+    pub attributes: Vec<AttributeValue>,
 }
 
 // // check base_types attributes
@@ -54,12 +54,20 @@ impl DynamicsReport {
     fn check_integrity(&self) -> Result<(), String> {
         for (item_group_name, item_group) in &self.data {
             let varying_attribute_ids: BTreeSet<DogmaAttributeId> =
-                item_group.varying_attributes.keys().cloned().collect();
+                item_group.varying_attributes.iter().map(|a| a.id).collect();
+
+            if varying_attribute_ids.len() != item_group.varying_attributes.len() {
+                return Err(format!(
+                    "Duplicate found for varying_attributes for item group {}",
+                    item_group_name,
+                ))
+            }
 
             for source_mutator_group in &item_group.source_mutator_groups {
                 if !item_group
                     .base_types
-                    .contains_key(&source_mutator_group.source_type_id)
+                    .iter()
+                    .any(|t| t.id == source_mutator_group.source_type_id)
                 {
                     return Err(format!(
                         "Source type {} not found in base types for item group {}",
@@ -67,9 +75,19 @@ impl DynamicsReport {
                     ));
                 }
 
+                let base_type_ids: BTreeSet<TypeId> =
+                    item_group.base_types.iter().map(|t| t.id).collect();
+                if base_type_ids.len() != item_group.base_types.len() {
+                    return Err(format!(
+                        "Duplicate found for base_types for item group {}",
+                        item_group_name,
+                    ))
+                }
+
                 if !item_group
                     .mutators
-                    .contains_key(&source_mutator_group.mutator_type_id)
+                    .iter()
+                    .any(|g| g.id == source_mutator_group.mutator_type_id)
                 {
                     return Err(format!(
                         "Mutator type {} not found in mutators for item group {}",
@@ -77,8 +95,17 @@ impl DynamicsReport {
                     ));
                 }
 
+                let mutator_ids: BTreeSet<TypeId> =
+                    item_group.mutators.iter().map(|t| t.id).collect();
+                if mutator_ids.len() != item_group.mutators.len() {
+                    return Err(format!(
+                        "Duplicate found for mutators for item group {}",
+                        item_group_name,
+                    ))
+                }
+
                 let attribute_ids: BTreeSet<DogmaAttributeId> =
-                    source_mutator_group.attributes.keys().cloned().collect();
+                    source_mutator_group.attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
                     return Err(format!(
@@ -87,45 +114,48 @@ impl DynamicsReport {
                     ));
                 }
 
-                for (item_id, dynamic) in &source_mutator_group.dynamics {
+                for dynamic in &source_mutator_group.dynamics {
                     let attribute_ids: BTreeSet<DogmaAttributeId> =
-                        dynamic.attributes.keys().cloned().collect();
+                        dynamic.attributes.iter().map(|a| a.id).collect();
 
                     if attribute_ids != varying_attribute_ids {
                         return Err(format!(
-                            "Attribute mismatch for dynamic {item_group_name}/{}.{}/{item_id}",
+                            "Attribute mismatch for dynamic {item_group_name}/{}.{}/{}",
                             source_mutator_group.source_type_id,
                             source_mutator_group.mutator_type_id,
+                            dynamic.item_id,
                         ));
                     }
                 }
             }
 
-            for (base_type_id, base_type) in &item_group.base_types {
+            for base_type in &item_group.base_types {
                 let attribute_ids: BTreeSet<DogmaAttributeId> =
-                    base_type.attributes.keys().cloned().collect();
+                    base_type.attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
                     return Err(format!(
-                        "Attribute mismatch for type {item_group_name}/{base_type_id}"
+                        "Attribute mismatch for type {item_group_name}/{}",
+                        base_type.id
                     ));
                 }
             }
 
-            for (mutator_type_id, mutator) in &item_group.mutators {
+            for mutator in &item_group.mutators {
                 let attribute_ids: BTreeSet<DogmaAttributeId> =
-                    mutator.attributes.keys().cloned().collect();
+                    mutator.attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
                     return Err(format!(
-                        "Attribute mismatch for mutator {item_group_name}/{mutator_type_id}"
+                        "Attribute mismatch for mutator {item_group_name}/{}",
+                        mutator.id
                     ));
                 }
             }
 
             {
                 let attribute_ids: BTreeSet<DogmaAttributeId> =
-                    item_group.min_max_attributes.keys().cloned().collect();
+                    item_group.min_max_attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
                     return Err(format!(
@@ -143,7 +173,7 @@ impl DynamicsReport {
 
         let character_assets_db = &context.character_assets_db;
 
-        character_assets_db.with_all_data(|assets, dynamics, types, dogma_attributes| {
+        character_assets_db.with_all_data(|_assets, dynamics, types, dogma_attributes| {
             println!(
                 "get all from character_assets_db: {:?}",
                 start_time.elapsed()
@@ -203,8 +233,7 @@ impl DynamicsReport {
             // }
             let mut asset_lookup_time = std::time::Duration::new(0, 0);
             let mut location_chain_time = std::time::Duration::new(0, 0);
-            let mut attributes_map_time = std::time::Duration::new(0, 0);
-            let mut attributes_collect_time = std::time::Duration::new(0, 0);
+            let mut attributes_collect_time: std::time::Duration = std::time::Duration::new(0, 0);
             let mut struct_creation_time = std::time::Duration::new(0, 0);
             let mut btree_insert_time = std::time::Duration::new(0, 0);
 
@@ -235,17 +264,13 @@ impl DynamicsReport {
 
                 // 3. Attributes mapping timing
                 let start = Instant::now();
-                let attr_iter = dynamic.dogma_attributes.iter().map(|attr| AttributeValue {
+                let attributes = dynamic.dogma_attributes.iter().map(|attr| AttributeValue {
                     id: attr.attribute_id,
                     value: attr.value,
-                });
-                attributes_map_time += start.elapsed();
-
-                // 4. Collection timing
-                let start = Instant::now();
-                let attributes: BTreeMap<DogmaAttributeId, AttributeValue> =
-                    attr_iter.map(|attr| (attr.id, attr)).collect();
+                }).collect();
                 attributes_collect_time += start.elapsed();
+                
+
 
                 // 5. Struct creation timing
                 let start = Instant::now();
@@ -277,83 +302,37 @@ impl DynamicsReport {
             // Print the breakdown
             println!("=== LOOP TIMING BREAKDOWN ===");
             println!("Total items processed: {}", total_items);
-            println!(
-                "Asset lookup:      {:?} ({:.1}%)",
-                asset_lookup_time,
-                asset_lookup_time.as_secs_f64()
-                    / (asset_lookup_time
+            let total_time = (asset_lookup_time
                         + location_chain_time
-                        + attributes_map_time
                         + attributes_collect_time
                         + struct_creation_time
                         + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
+                        .as_secs_f64();
+
+            println!(
+                "Asset lookup:      {:?} ({:.1}%)",
+                asset_lookup_time,
+                asset_lookup_time.as_secs_f64() / total_time * 100.0
             );
             println!(
                 "Location chain:    {:?} ({:.1}%)",
                 location_chain_time,
-                location_chain_time.as_secs_f64()
-                    / (asset_lookup_time
-                        + location_chain_time
-                        + attributes_map_time
-                        + attributes_collect_time
-                        + struct_creation_time
-                        + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
-            );
-            println!(
-                "Attributes map:    {:?} ({:.1}%)",
-                attributes_map_time,
-                attributes_map_time.as_secs_f64()
-                    / (asset_lookup_time
-                        + location_chain_time
-                        + attributes_map_time
-                        + attributes_collect_time
-                        + struct_creation_time
-                        + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
+                location_chain_time.as_secs_f64() / total_time * 100.0
             );
             println!(
                 "Attributes collect:{:?} ({:.1}%)",
                 attributes_collect_time,
-                attributes_collect_time.as_secs_f64()
-                    / (asset_lookup_time
-                        + location_chain_time
-                        + attributes_map_time
-                        + attributes_collect_time
-                        + struct_creation_time
-                        + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
+                attributes_collect_time.as_secs_f64() / total_time * 100.0
             );
             println!(
                 "Struct creation:   {:?} ({:.1}%)",
                 struct_creation_time,
-                struct_creation_time.as_secs_f64()
-                    / (asset_lookup_time
-                        + location_chain_time
-                        + attributes_map_time
-                        + attributes_collect_time
-                        + struct_creation_time
-                        + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
+                struct_creation_time.as_secs_f64() / total_time * 100.0
             );
             println!(
                 "BTree insert:      {:?} ({:.1}%)",
                 btree_insert_time,
-                btree_insert_time.as_secs_f64()
-                    / (asset_lookup_time
-                        + location_chain_time
-                        + attributes_map_time
-                        + attributes_collect_time
-                        + struct_creation_time
-                        + btree_insert_time)
-                        .as_secs_f64()
-                    * 100.0
+                btree_insert_time.as_secs_f64() / total_time * 100.0
             );
             println!("=============================");
             println!("analyzed all dynamics: {:?}", start_time.elapsed());
@@ -422,10 +401,6 @@ impl DynamicsReport {
                 append_varying_attributes(&mut varying_attributes);
                 // add possible virtual attributes ids
                 varying_attribute_ids = varying_attributes.iter().map(|a| a.id).collect();
-                let varying_attributes = varying_attributes
-                    .iter()
-                    .map(|attr| (attr.id, attr.clone()))
-                    .collect();
 
                 println!(
                     "{}: analyzed all varying attributes: {:?}",
@@ -433,7 +408,7 @@ impl DynamicsReport {
                     start_time.elapsed()
                 );
 
-                let base_types: BTreeMap<DogmaAttributeId, BaseItemType> = character_assets_db
+                let base_types: Vec<BaseItemType> = character_assets_db
                     .get_applicable_types_by_resulting_type(resulting_type_id)?
                     .iter()
                     .filter_map(|type_id| match types.get(type_id) {
@@ -450,19 +425,13 @@ impl DynamicsReport {
 
                             append_attribute_values(&mut attributes);
 
-                            let attributes = attributes
-                                .iter()
-                                .map(|attr| (attr.id, attr.clone()))
-                                .collect();
-
-                            Some((
-                                *type_id,
+                            Some(
                                 BaseItemType {
                                     id: *type_id,
                                     name: item_type.name.clone(),
                                     attributes,
                                 },
-                            ))
+                            )
                         }
                         None => {
                             eprintln!("Type not found: {}", type_id);
@@ -474,7 +443,7 @@ impl DynamicsReport {
                 let raw_mutators =
                     character_assets_db.get_mutator_ids_by_resulting_type_id(resulting_type_id)?;
 
-                let mut mutators = BTreeMap::new();
+                let mut mutators = vec![];
                 for ((mutator_type_id, mutator_name), attributes_map) in raw_mutators {
                     let mut attributes = attributes_map
                         .into_iter()
@@ -486,17 +455,12 @@ impl DynamicsReport {
                         .collect();
                     append_min_max_attribute_values(&mut attributes);
 
-                    let attributes = attributes
-                        .iter()
-                        .map(|attr| (attr.id, attr.clone()))
-                        .collect();
-
                     let mutator = MutatorConcise {
                         id: mutator_type_id,
                         name: mutator_name,
                         attributes,
                     };
-                    mutators.insert(mutator_type_id, mutator);
+                    mutators.push(mutator);
                 }
 
                 let raw_min_max_attributes = character_assets_db
@@ -512,10 +476,6 @@ impl DynamicsReport {
                     .collect();
 
                 append_min_max_attribute_values(&mut min_max_attributes);
-                let min_max_attributes = min_max_attributes
-                    .iter()
-                    .map(|attr| (attr.id, attr.clone()))
-                    .collect();
 
                 let mut resulting_group = ResultingGroup {
                     source_mutator_groups: vec![],
@@ -532,15 +492,8 @@ impl DynamicsReport {
                         .to_vec();
 
                     for dynamic in &mut dynamics {
-                        let mut attributes: Vec<AttributeValue> =
-                            dynamic.attributes.values().cloned().collect();
-                        attributes.retain(|attr| varying_attribute_ids.contains(&attr.id));
-                        append_attribute_values(&mut attributes);
-
-                        dynamic.attributes = attributes
-                            .iter()
-                            .map(|attr| (attr.id, attr.clone()))
-                            .collect();
+                        dynamic.attributes.retain(|attr| varying_attribute_ids.contains(&attr.id));
+                        append_attribute_values(&mut dynamic.attributes);
                     }
 
                     let source_type = types.get(source_type_id).unwrap();
@@ -569,16 +522,6 @@ impl DynamicsReport {
                         .collect();
 
                     append_min_max_attribute_values(&mut attributes);
-
-                    let dynamics = dynamics
-                        .iter()
-                        .map(|item| (item.item_id, item.clone()))
-                        .collect();
-
-                    let attributes = attributes
-                        .iter()
-                        .map(|attr| (attr.id, attr.clone()))
-                        .collect();
 
                     let source_mutator_group = SourceMutatorGroup {
                         source_type_id: *source_type_id,
@@ -616,7 +559,7 @@ pub struct DynamicItemData {
     station_name: String,
     location_type: String,
     location_name: String,
-    attributes: BTreeMap<DogmaAttributeId, AttributeValue>,
+    attributes: Vec<AttributeValue>,
 }
 
 #[derive(Serialize, Clone)]
