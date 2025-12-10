@@ -1,6 +1,7 @@
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
+use thiserror::Error;
 
 use crate::AppContext;
 use crate::{DogmaAttributeId, ItemId, TypeId};
@@ -48,70 +49,124 @@ pub struct BaseItemType {
     pub attributes: Vec<AttributeValue>,
 }
 
-// // check base_types attributes
+#[derive(Serialize, Clone)]
+pub struct DynamicItemData {
+    item_id: ItemId,
+    station_name: String,
+    location_type: String,
+    location_name: String,
+    attributes: Vec<AttributeValue>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct VaryingAttribute {
+    id: DogmaAttributeId,
+    name: String,
+    high_is_good: Option<bool>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct AttributeValue {
+    id: DogmaAttributeId,
+    value: f64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct AttributeRange {
+    id: DogmaAttributeId,
+    min: f64,
+    max: f64,
+}
+
+#[derive(Error, Debug, Serialize)]
+pub enum DynamicsError {
+    #[error("Duplicate attributes {attributes:?} in item group {item_group}")]
+    DuplicateAttributes {
+        item_group: String,
+        attributes: Vec<DogmaAttributeId>,
+    },
+    #[error("Source type {type_id} not found in item group {item_group}")]
+    NotFoundSourceType {
+        item_group: String,
+        type_id: TypeId,
+    },
+    #[error("Duplicate base type {type_ids:?} in item group {item_group}")]
+    DuplicateBaseTypes {
+        item_group: String,
+        type_ids: Vec<TypeId>,
+    },
+    #[error("Mutator type {type_id} not found in item group {item_group}")]
+    NotFoundMutatorType {
+        item_group: String,
+        type_id: TypeId,
+    },
+    #[error("Duplicate mutator type {type_ids:?} in item group {item_group}")]
+    DuplicateMutatorTypes {
+        item_group: String,
+        type_ids: Vec<TypeId>,
+    },
+    #[error("Mismatched attributes in {item_group} ({place}), A-B {a_minus_b:?}, B-A {b_minus_a:?}")]
+    MismatchedAttributes {
+        item_group: String,
+        a_minus_b: Vec<DogmaAttributeId>,
+        b_minus_a: Vec<DogmaAttributeId>,
+        place: String,
+    },
+    #[error("Database error: {0}")]
+    DatabaseError(String)
+}
+
+fn duplicates<T: Ord + std::hash::Hash>(v: Vec<T>) -> Vec<T> {
+    let mut h = HashMap::new();
+    for e in v {
+        h.entry(e).and_modify(|e| { *e += 1 }).or_insert(1);
+    }
+    h.into_iter().filter_map(|(k, v)| if v > 1 { Some(k) } else { None }).collect()
+}
 
 impl DynamicsReport {
-    fn check_integrity(&self) -> Result<(), String> {
+    fn check_integrity(&self) -> Result<(), DynamicsError> {
         for (item_group_name, item_group) in &self.data {
             let varying_attribute_ids: BTreeSet<DogmaAttributeId> =
                 item_group.varying_attributes.iter().map(|a| a.id).collect();
 
-            if varying_attribute_ids.len() != item_group.varying_attributes.len() {
-                return Err(format!(
-                    "Duplicate found for varying_attributes for item group {}",
-                    item_group_name,
-                ))
+            let d = duplicates(item_group.varying_attributes.iter().map(|a| a.id).collect());
+            if !d.is_empty() {
+                return Err(DynamicsError::DuplicateAttributes { item_group: item_group_name.to_string(), attributes: d });
             }
 
             for source_mutator_group in &item_group.source_mutator_groups {
-                if !item_group
-                    .base_types
-                    .iter()
-                    .any(|t| t.id == source_mutator_group.source_type_id)
-                {
-                    return Err(format!(
-                        "Source type {} not found in base types for item group {}",
-                        source_mutator_group.source_type_id, item_group_name
-                    ));
+                let found_source_type = item_group.base_types.iter().any(|t| t.id == source_mutator_group.source_type_id);
+                if !found_source_type {
+                    return Err(DynamicsError::NotFoundSourceType { item_group: item_group_name.to_string(), type_id: source_mutator_group.source_type_id });
                 }
 
-                let base_type_ids: BTreeSet<TypeId> =
-                    item_group.base_types.iter().map(|t| t.id).collect();
-                if base_type_ids.len() != item_group.base_types.len() {
-                    return Err(format!(
-                        "Duplicate found for base_types for item group {}",
-                        item_group_name,
-                    ))
+                let d = duplicates(item_group.base_types.iter().map(|t| t.id).collect());
+                if !d.is_empty() {
+                    return Err(DynamicsError::DuplicateBaseTypes { item_group: item_group_name.to_string(), type_ids: d });
                 }
 
-                if !item_group
-                    .mutators
-                    .iter()
-                    .any(|g| g.id == source_mutator_group.mutator_type_id)
-                {
-                    return Err(format!(
-                        "Mutator type {} not found in mutators for item group {}",
-                        source_mutator_group.mutator_type_id, item_group_name
-                    ));
+                let found_mutator_type = item_group.mutators.iter().any(|t| t.id == source_mutator_group.mutator_type_id);
+                if !found_mutator_type {
+                    return Err(DynamicsError::NotFoundMutatorType { item_group: item_group_name.to_string(), type_id: source_mutator_group.mutator_type_id });
                 }
 
-                let mutator_ids: BTreeSet<TypeId> =
-                    item_group.mutators.iter().map(|t| t.id).collect();
-                if mutator_ids.len() != item_group.mutators.len() {
-                    return Err(format!(
-                        "Duplicate found for mutators for item group {}",
-                        item_group_name,
-                    ))
+                let d = duplicates(item_group.mutators.iter().map(|t| t.id).collect());
+                if !d.is_empty() {
+                    return Err(DynamicsError::DuplicateMutatorTypes { item_group: item_group_name.to_string(), type_ids: d });
                 }
 
-                let attribute_ids: BTreeSet<DogmaAttributeId> =
-                    source_mutator_group.attributes.iter().map(|a| a.id).collect();
-
+                let attribute_ids: BTreeSet<DogmaAttributeId> = source_mutator_group.attributes.iter().map(|a| a.id).collect();
                 if attribute_ids != varying_attribute_ids {
-                    return Err(format!(
-                        "Attribute mismatch for source mutator group {item_group_name}/{}.{}",
-                        source_mutator_group.source_type_id, source_mutator_group.mutator_type_id
-                    ));
+                    let a_minus_b = varying_attribute_ids.difference(&attribute_ids).cloned().collect();
+                    let b_minus_a = attribute_ids.difference(&varying_attribute_ids).cloned().collect();
+                    let place = "attributes".to_string();
+                    return Err(DynamicsError::MismatchedAttributes { 
+                        item_group: item_group_name.to_string(), 
+                        a_minus_b, 
+                        b_minus_a,
+                        place,
+                     });
                 }
 
                 for dynamic in &source_mutator_group.dynamics {
@@ -119,12 +174,15 @@ impl DynamicsReport {
                         dynamic.attributes.iter().map(|a| a.id).collect();
 
                     if attribute_ids != varying_attribute_ids {
-                        return Err(format!(
-                            "Attribute mismatch for dynamic {item_group_name}/{}.{}/{}",
-                            source_mutator_group.source_type_id,
-                            source_mutator_group.mutator_type_id,
-                            dynamic.item_id,
-                        ));
+                        let a_minus_b = varying_attribute_ids.difference(&attribute_ids).cloned().collect();
+                        let b_minus_a = attribute_ids.difference(&varying_attribute_ids).cloned().collect();
+                        let place = format!("dynamic[{}]", dynamic.item_id);
+                        return Err(DynamicsError::MismatchedAttributes { 
+                            item_group: item_group_name.to_string(), 
+                            a_minus_b, 
+                            b_minus_a,
+                            place,
+                        });
                     }
                 }
             }
@@ -134,10 +192,15 @@ impl DynamicsReport {
                     base_type.attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
-                    return Err(format!(
-                        "Attribute mismatch for type {item_group_name}/{}",
-                        base_type.id
-                    ));
+                    let a_minus_b = varying_attribute_ids.difference(&attribute_ids).cloned().collect();
+                    let b_minus_a = attribute_ids.difference(&varying_attribute_ids).cloned().collect();
+                    let place = format!("base_type[{}]", base_type.id);
+                    return Err(DynamicsError::MismatchedAttributes {
+                        item_group: item_group_name.to_string(), 
+                        a_minus_b, 
+                        b_minus_a,
+                        place,
+                     });
                 }
             }
 
@@ -146,10 +209,16 @@ impl DynamicsReport {
                     mutator.attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
-                    return Err(format!(
-                        "Attribute mismatch for mutator {item_group_name}/{}",
-                        mutator.id
-                    ));
+                    let a_minus_b = varying_attribute_ids.difference(&attribute_ids).cloned().collect();
+                    let b_minus_a = attribute_ids.difference(&varying_attribute_ids).cloned().collect();
+                    let place = format!("mutator[{}]", mutator.id);
+                    return Err(
+                        DynamicsError::MismatchedAttributes { 
+                            item_group: item_group_name.to_string(), 
+                            a_minus_b, 
+                            b_minus_a,
+                            place,
+                        });
                 }
             }
 
@@ -158,9 +227,15 @@ impl DynamicsReport {
                     item_group.min_max_attributes.iter().map(|a| a.id).collect();
 
                 if attribute_ids != varying_attribute_ids {
-                    return Err(format!(
-                        "Attribute mismatch for min_max attributes {item_group_name}"
-                    ));
+                    let a_minus_b = varying_attribute_ids.difference(&attribute_ids).cloned().collect();
+                    let b_minus_a = attribute_ids.difference(&varying_attribute_ids).cloned().collect();
+                    let place = "min_max_attributes".to_string();
+                    return Err(DynamicsError::MismatchedAttributes { 
+                        item_group: item_group_name.to_string(), 
+                        a_minus_b, 
+                        b_minus_a,
+                        place,
+                    });
                 }
             }
         }
@@ -168,7 +243,7 @@ impl DynamicsReport {
         Ok(())
     }
 
-    pub async fn new(context: &AppContext) -> Result<Self, String> {
+    pub async fn new(context: &AppContext) -> Result<Self, DynamicsError> {
         let start_time = Instant::now();
 
         let character_assets_db = &context.character_assets_db;
@@ -181,7 +256,7 @@ impl DynamicsReport {
 
             let location_start = Instant::now();
             let item_ids: Vec<ItemId> = dynamics.keys().cloned().collect();
-            let location_cache = character_assets_db.build_location_chains_batch(&item_ids)?;
+            let location_cache = character_assets_db.build_location_chains_batch(&item_ids).map_err(DynamicsError::DatabaseError)?;
             println!(
                 "pre-computed {} location chains: {:?}",
                 item_ids.len(),
@@ -341,7 +416,8 @@ impl DynamicsReport {
                 BTreeMap::new();
             for ((source_type_id, mutator_type_id), _) in &dynamics_by_source_mutator {
                 let resulting_type_id = character_assets_db
-                    .get_resulting_type_by_source_mutator(*source_type_id, *mutator_type_id)?;
+                    .get_resulting_type_by_source_mutator(*source_type_id, *mutator_type_id)
+                    .map_err(DynamicsError::DatabaseError)?;
 
                 resulting_to_source_mutator
                     .entry(resulting_type_id)
@@ -359,7 +435,9 @@ impl DynamicsReport {
 
                 for (_source_type_id, mutator_type_id) in source_mutators {
                     let attribute_ids =
-                        character_assets_db.get_attribute_ids_by_mutator(mutator_type_id)?;
+                        character_assets_db
+                            .get_attribute_ids_by_mutator(mutator_type_id)
+                            .map_err(DynamicsError::DatabaseError)?;
                     possible_attributes.push(attribute_ids);
                 }
 
@@ -409,7 +487,8 @@ impl DynamicsReport {
                 );
 
                 let base_types: Vec<BaseItemType> = character_assets_db
-                    .get_applicable_types_by_resulting_type(resulting_type_id)?
+                    .get_applicable_types_by_resulting_type(resulting_type_id)
+                    .map_err(DynamicsError::DatabaseError)?
                     .iter()
                     .filter_map(|type_id| match types.get(type_id) {
                         Some(item_type) => {
@@ -441,7 +520,9 @@ impl DynamicsReport {
                     .collect();
 
                 let raw_mutators =
-                    character_assets_db.get_mutator_ids_by_resulting_type_id(resulting_type_id)?;
+                    character_assets_db
+                        .get_mutator_ids_by_resulting_type_id(resulting_type_id)
+                        .map_err(DynamicsError::DatabaseError)?;
 
                 let mut mutators = vec![];
                 for ((mutator_type_id, mutator_name), attributes_map) in raw_mutators {
@@ -464,7 +545,8 @@ impl DynamicsReport {
                 }
 
                 let raw_min_max_attributes = character_assets_db
-                    .get_min_max_attributes_by_resulting_type_id(resulting_type_id)?;
+                    .get_min_max_attributes_by_resulting_type_id(resulting_type_id)
+                    .map_err(DynamicsError::DatabaseError)?;
 
                 let mut min_max_attributes: Vec<AttributeRange> = raw_min_max_attributes
                     .iter()
@@ -499,7 +581,9 @@ impl DynamicsReport {
                     let source_type = types.get(source_type_id).unwrap();
 
                     let attributes =
-                        character_assets_db.get_attributes_by_mutator_type_id(mutator_type_id)?;
+                        character_assets_db
+                            .get_attributes_by_mutator_type_id(mutator_type_id)
+                            .map_err(DynamicsError::DatabaseError)?;
 
                     let mut attributes = source_type
                         .dogma_attributes
@@ -549,35 +633,8 @@ impl DynamicsReport {
             println!("created report: {:?}", start_time.elapsed());
 
             Ok(ret)
-        })?
+        }).map_err(DynamicsError::DatabaseError)?
     }
 }
 
-#[derive(Serialize, Clone)]
-pub struct DynamicItemData {
-    item_id: ItemId,
-    station_name: String,
-    location_type: String,
-    location_name: String,
-    attributes: Vec<AttributeValue>,
-}
 
-#[derive(Serialize, Clone)]
-pub struct VaryingAttribute {
-    id: DogmaAttributeId,
-    name: String,
-    high_is_good: Option<bool>,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct AttributeValue {
-    id: DogmaAttributeId,
-    value: f64,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct AttributeRange {
-    id: DogmaAttributeId,
-    min: f64,
-    max: f64,
-}
