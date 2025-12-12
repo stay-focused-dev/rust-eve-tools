@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::AppContext;
@@ -52,9 +53,9 @@ pub struct BaseItemType {
 #[derive(Serialize, Clone)]
 pub struct DynamicItemData {
     item_id: ItemId,
-    station_name: String,
-    location_type: String,
-    location_name: String,
+    station_name: Arc<str>,
+    location_type: Arc<str>,
+    location_name: Arc<str>,
     attributes: Vec<AttributeValue>,
 }
 
@@ -269,37 +270,6 @@ impl DynamicsReport {
             let mut dynamics_by_source_mutator: BTreeMap<(TypeId, TypeId), Vec<DynamicItemData>> =
                 BTreeMap::new();
 
-            // for (item_id, dynamic) in dynamics {
-            //     let asset = assets.get(item_id).unwrap();
-
-            //     let (station_name, location_type, location_name) =
-            //         character_assets_db.build_location_chain(asset);
-
-            //     // let (station_name, location_type, location_name) =
-            //     //     ("".to_string(), "".to_string(), "".to_string());
-
-            //     let attributes = dynamic
-            //         .dogma_attributes
-            //         .iter()
-            //         .map(|attr| AttributeValue {
-            //             id: attr.attribute_id,
-            //             value: attr.value,
-            //         })
-            //         .collect();
-
-            //     let item = DynamicItemData {
-            //         item_id: *item_id,
-            //         station_name,
-            //         location_type,
-            //         location_name,
-            //         attributes,
-            //     };
-
-            //     dynamics_by_source_mutator
-            //         .entry((dynamic.source_type_id, dynamic.mutator_type_id))
-            //         .or_default()
-            //         .push(item);
-            // }
             let mut asset_lookup_time = std::time::Duration::new(0, 0);
             let mut location_chain_time = std::time::Duration::new(0, 0);
             let mut attributes_collect_time: std::time::Duration = std::time::Duration::new(0, 0);
@@ -323,7 +293,7 @@ impl DynamicsReport {
                 // let (station_name, location_type, location_name) =
                 //     character_assets_db.build_location_chain(asset);
                 let asset = assets.get(item_id).unwrap();
-                let (station_name, location_type, location_name) = 
+                let (station_name, location_type, location_name) =
                     character_assets_db.build_location_chain(
                         asset,
                         assets,

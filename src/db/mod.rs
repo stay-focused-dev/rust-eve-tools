@@ -10,6 +10,7 @@ use serde_cbor;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::RwLock;
 use std::time::Instant;
+use std::sync::Arc;
 
 
 #[derive(Default)]
@@ -860,8 +861,8 @@ pub fn build_location_chain(
     assets_names: &BTreeMap<ItemId, String>,
     stations: &BTreeMap<StationId, Station>,
     stats: &mut ChainStats,
-    cache: &mut HashMap<i64, (String, String, String)>,
-) -> (String, String, String) {
+    cache: &mut HashMap<i64, (Arc<str>, Arc<str>, Arc<str>)>,
+) -> (Arc<str>, Arc<str>, Arc<str>) {
     stats.total_calls += 1;
 
     if let Some(cached) = cache.get(&asset.location_id) {
@@ -873,17 +874,16 @@ pub fn build_location_chain(
     let mut current_location_type = asset.location_type.clone();
     let mut station_name = "Unknown".to_string();
 
-    let debug_item_id = ItemId::from(1049687715530);
-    let is_debug_item = asset.item_id == debug_item_id;
-    if is_debug_item {
-        println!("current location id = {current_location_id}, current location type = {current_location_type}");
-    }
     if current_location_type == "station" {
         stats.direct_station += 1;
         if let Some(station) = stations.get(&(current_location_id as StationId)) {
             station_name = station.name.clone();
         }
-        let result = (station_name, current_location_type, "Direct".to_string());
+        let result = (
+            Arc::from(station_name.as_str()), 
+            Arc::from(current_location_type.as_str()), 
+            Arc::from("Direct")
+        );
         cache.insert(asset.location_id, result.clone());
         return result;
     }
@@ -893,14 +893,8 @@ pub fn build_location_chain(
     
     while depth < MAX_DEPTH {
         stats.lookups += 1;
-        if is_debug_item {
-            println!("in while, depth = {depth}");
-        }
         
         if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
-            if is_debug_item {
-                println!("parent asset = {parent_asset:?}");
-            }
 
             let name = assets_names
                 .get(&parent_asset.item_id)
@@ -914,16 +908,10 @@ pub fn build_location_chain(
             if current_location_type == "station" {
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
-                    if is_debug_item {
-                        println!("station name for parent asset = {station_name}");
-                    }
                 }
                 break;
             }
         } else {
-            if is_debug_item {
-                println!("no parent asset");
-            }
             if current_location_type == "station" {
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
@@ -935,9 +923,6 @@ pub fn build_location_chain(
         depth += 1;
     }
 
-    if is_debug_item {
-        println!("location chain = {location_chain:?}");
-    }
     stats.max_depth = stats.max_depth.max(depth);
     stats.total_depth += depth;
     
@@ -948,7 +933,11 @@ pub fn build_location_chain(
         location_chain.join(" -> ")
     };
 
-    let result = (station_name, current_location_type, location_name);
+    let result = (
+        Arc::from(station_name.as_str()),
+        Arc::from(current_location_type.as_str()),
+        Arc::from(location_name.as_str())
+    );
     cache.insert(asset.location_id, result.clone());
     result
 }
