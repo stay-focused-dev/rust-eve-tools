@@ -888,13 +888,8 @@ pub fn build_location_chain(
     assets: &BTreeMap<ItemId, AssetItem>,
     assets_names: &BTreeMap<ItemId, String>,
     stations: &BTreeMap<StationId, Station>,
-    stats: &mut ChainStats,
     cache: &mut HashMap<i64, (String, String, String)>,
-    timings: &mut ChainTimings,
 ) -> (String, String, String) {
-    let total_start = Instant::now();
-    stats.total_calls += 1;
-
     // let cache_start = Instant::now();
     if let Some(cached) = cache.get(&asset.location_id) {
         //timings.cache_hit += cache_start.elapsed();
@@ -909,7 +904,6 @@ pub fn build_location_chain(
     let mut station_name = "Unknown".to_string();
 
     if current_location_type == "station" {
-        stats.direct_station += 1;
         let station_start = Instant::now();
         if let Some(station) = stations.get(&(current_location_id as StationId)) {
             station_name = station.name.clone();
@@ -927,8 +921,6 @@ pub fn build_location_chain(
     const MAX_DEPTH: u32 = 10;
     
     while depth < MAX_DEPTH {
-        stats.lookups += 1;
-
         let asset_start = Instant::now();
         let parent_asset = assets.get(&(ItemId::from(current_location_id)));
         // timings.asset_lookup += asset_start.elapsed();
@@ -967,9 +959,6 @@ pub fn build_location_chain(
         depth += 1;
     }
 
-    stats.max_depth = stats.max_depth.max(depth);
-    stats.total_depth += depth;
-    
     let string_start = Instant::now();
     location_chain.reverse();
     let location_name = if location_chain.is_empty() {

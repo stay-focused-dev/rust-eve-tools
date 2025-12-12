@@ -10,7 +10,7 @@ pub struct ItemId(i64);
 impl fmt::Display for ItemId {
 
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ItemId({})", self.0)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -31,7 +31,7 @@ impl From<ItemId> for i64 {
 pub struct TypeId(i32);
 impl fmt::Display for TypeId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TypeId({})", self.0)
+        write!(f, "{}", self.0)
     }
 }
 

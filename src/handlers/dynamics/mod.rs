@@ -255,9 +255,6 @@ impl DynamicsReport {
                 start_time.elapsed()
             );
 
-            let location_start = Instant::now();
-            let item_ids: Vec<ItemId> = dynamics.keys().cloned().collect();
-
             let name_to_id_resolver = |attribute_name: &str| -> DogmaAttributeId {
                 let res = character_assets_db.get_attribute_id_by_name(attribute_name.to_string());
                 match res {
@@ -279,9 +276,7 @@ impl DynamicsReport {
             let total_items = dynamics.len();
             let mut processed_items = 0;
 
-            let mut chain_stats = crate::db::ChainStats::default();
             let mut location_cache = HashMap::new();
-            let mut chain_timings = crate::db::ChainTimings::default();
 
             for (item_id, dynamic) in dynamics {
                 // 1. Asset lookup timing
@@ -300,9 +295,7 @@ impl DynamicsReport {
                         assets,
                         assets_names,
                         stations,
-                        &mut chain_stats,
                         &mut location_cache,
-                        &mut chain_timings,
                     );
                 location_chain_time += start.elapsed();
 
@@ -347,11 +340,6 @@ impl DynamicsReport {
                     println!("Processed {}/{} items", processed_items, total_items);
                 }
             }
-
-            chain_stats.print_summary();
-            chain_timings.print_breakdown();
-            println!("Cache entries: {}", location_cache.len());
-            println!("Cache hit rate: {:.1}%", (1.0 - (chain_stats.lookups as f64 / chain_stats.total_calls as f64)) * 100.0);
 
             // Print the breakdown
             println!("=== LOOP TIMING BREAKDOWN ===");
