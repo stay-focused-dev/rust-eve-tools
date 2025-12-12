@@ -248,7 +248,7 @@ impl DynamicsReport {
 
         let character_assets_db = &context.character_assets_db;
 
-        character_assets_db.with_all_data(|_assets, dynamics, types, dogma_attributes| {
+        character_assets_db.with_all_data(|assets, assets_names, stations, dynamics, types, dogma_attributes| {
             println!(
                 "get all from character_assets_db: {:?}",
                 start_time.elapsed()
@@ -256,12 +256,6 @@ impl DynamicsReport {
 
             let location_start = Instant::now();
             let item_ids: Vec<ItemId> = dynamics.keys().cloned().collect();
-            let location_cache = character_assets_db.build_location_chains_batch(&item_ids).map_err(DynamicsError::DatabaseError)?;
-            println!(
-                "pre-computed {} location chains: {:?}",
-                item_ids.len(),
-                location_start.elapsed()
-            );
 
             let name_to_id_resolver = |attribute_name: &str| -> DogmaAttributeId {
                 let res = character_assets_db.get_attribute_id_by_name(attribute_name.to_string());
@@ -315,6 +309,9 @@ impl DynamicsReport {
             let total_items = dynamics.len();
             let mut processed_items = 0;
 
+            let mut chain_stats: crate::db::ChainStats = crate::db::ChainStats::default();
+            let mut location_cache = HashMap::new();
+
             for (item_id, dynamic) in dynamics {
                 // 1. Asset lookup timing
                 let start = Instant::now();
@@ -325,24 +322,29 @@ impl DynamicsReport {
                 let start = Instant::now();
                 // let (station_name, location_type, location_name) =
                 //     character_assets_db.build_location_chain(asset);
-                let (station_name, location_type, location_name) = location_cache
-                    .get(item_id)
-                    .map(|(s, t, l)| (s.clone(), t.clone(), l.clone()))
-                    .unwrap_or_else(|| {
-                        (
-                            "Unknown".to_string(),
-                            "Unknown".to_string(),
-                            "Unknown".to_string(),
-                        )
-                    });
+                let asset = assets.get(item_id).unwrap();
+                let (station_name, location_type, location_name) = 
+                    character_assets_db.build_location_chain(
+                        asset,
+                        assets,
+                        assets_names,
+                        stations,
+                        &mut chain_stats,
+                        &mut location_cache,
+                    );
                 location_chain_time += start.elapsed();
 
                 // 3. Attributes mapping timing
                 let start = Instant::now();
-                let attributes = dynamic.dogma_attributes.iter().map(|attr| AttributeValue {
+                let mut attributes = Vec::with_capacity(dynamic.dogma_attributes.len());
+                attributes.extend(dynamic.dogma_attributes.iter().map(|attr| AttributeValue {
                     id: attr.attribute_id,
                     value: attr.value,
-                }).collect();
+                }));
+                // let attributes = dynamic.dogma_attributes.iter().map(|attr| AttributeValue {
+                //     id: attr.attribute_id,
+                //     value: attr.value,
+                // }).collect();
                 attributes_collect_time += start.elapsed();
                 
 
@@ -373,6 +375,10 @@ impl DynamicsReport {
                     println!("Processed {}/{} items", processed_items, total_items);
                 }
             }
+
+            chain_stats.print_summary();
+            println!("Cache entries: {}", location_cache.len());
+            println!("Cache hit rate: {:.1}%", (1.0 - (chain_stats.lookups as f64 / chain_stats.total_calls as f64)) * 100.0);
 
             // Print the breakdown
             println!("=== LOOP TIMING BREAKDOWN ===");

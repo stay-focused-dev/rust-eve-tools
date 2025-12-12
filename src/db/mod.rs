@@ -9,6 +9,37 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_cbor;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::RwLock;
+use std::time::Instant;
+
+
+#[derive(Default)]
+pub struct ChainStats {
+    pub direct_station: usize,
+    pub lookups: usize,
+    pub max_depth: u32,
+    pub total_depth: u32,
+    pub total_calls: u32,
+}
+
+impl ChainStats {
+    pub fn avg_depth(&self) -> f64 {
+        if self.total_calls == 0 {
+            0.0
+        } else {
+            self.total_depth as f64 / self.total_calls as f64
+        }
+    }
+
+    pub fn print_summary(&self) {
+        println!("=== Chain Stats Summary ===");
+        println!("Total calls: {}", self.total_calls);
+        println!("Direct stations: {}", self.direct_station);
+        println!("Total lookups: {}", self.lookups);
+        println!("Max depth: {}", self.max_depth);
+        println!("Average depth: {:.2}", self.avg_depth());
+    }
+}
+
 
 pub struct CharacterAssets {
     pub assets: RwLock<BTreeMap<ItemId, AssetItem>>,
@@ -169,77 +200,6 @@ impl CharacterAssets {
             abyssal_items: RwLock::new(BTreeSet::from_iter(abyssal_items)),
             mutaplasmid_effects: RwLock::new(MutaplasmidEffects::default()),
         }
-    }
-
-    pub fn build_location_chain(&self, asset: &AssetItem) -> (String, String, String) {
-        let mut location_chain = Vec::new();
-        let mut current_location_id = asset.location_id;
-        let mut current_location_type = asset.location_type.clone();
-        let mut station_name = "Unknown".to_string();
-
-        let assets = self.assets.read().unwrap();
-        let asset_names = self.assets_names.read().unwrap();
-        let stations = self.stations.read().unwrap();
-
-        // If the asset is directly in a station, handle it immediately
-        if current_location_type == "station" {
-            if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                station_name = station.name.clone();
-            }
-            return (station_name, current_location_type, "Direct".to_string());
-        }
-
-        // Build the chain by following location_id up the hierarchy
-        let mut depth = 0;
-        const MAX_DEPTH: u32 = 10; // Prevent infinite loops
-
-        while depth < MAX_DEPTH {
-            // Try to find the parent asset/container
-            if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
-                // Get the name of this container/ship
-                let name = asset_names
-                    .get(&parent_asset.item_id)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // If no custom name, try to get the type name
-                        format!("Container_{}", parent_asset.item_id)
-                    });
-
-                location_chain.push(name);
-
-                // Move up the chain
-                current_location_id = parent_asset.location_id;
-                current_location_type = parent_asset.location_type.clone();
-
-                // Check if we've reached a station
-                if current_location_type == "station" {
-                    if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                        station_name = station.name.clone();
-                    }
-                    break;
-                }
-            } else {
-                // No parent asset found, check if current location is a station
-                if current_location_type == "station" {
-                    if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                        station_name = station.name.clone();
-                    }
-                }
-                break;
-            }
-
-            depth += 1;
-        }
-
-        // Reverse the chain so it goes from outermost to innermost
-        location_chain.reverse();
-        let location_name = if location_chain.is_empty() {
-            "Direct".to_string()
-        } else {
-            location_chain.join(" -> ")
-        };
-
-        (station_name, current_location_type, location_name)
     }
 
     pub fn add_mutaplasmid_effects(
@@ -852,6 +812,8 @@ impl CharacterAssetsDb {
     where
         F: FnOnce(
             &BTreeMap<ItemId, AssetItem>,
+            &BTreeMap<ItemId, String>,
+            &BTreeMap<StationId, Station>,
             &BTreeMap<ItemId, DynamicItem>,
             &BTreeMap<TypeId, ItemType>,
             &BTreeMap<DogmaAttributeId, DogmaAttribute>,
@@ -860,6 +822,16 @@ impl CharacterAssetsDb {
         let assets = self
             .db
             .assets
+            .read()
+            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+        let assets_names = self
+            .db
+            .assets_names
+            .read()
+            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
+        let stations = self
+            .db
+            .stations
             .read()
             .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
         let dynamics = self
@@ -877,101 +849,110 @@ impl CharacterAssetsDb {
             .dogma_attributes
             .read()
             .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
-        Ok(f(&*assets, &*dynamics, &*types, &*dogma_attributes))
+        Ok(f(&*assets, &*assets_names, &*stations, &*dynamics, &*types, &*dogma_attributes))
     }
 
-    pub fn build_location_chains_batch(
-        &self,
-        item_ids: &[ItemId],
-    ) -> Result<HashMap<ItemId, (String, String, String)>, String> {
-        let assets = self
-            .db
-            .assets
-            .read()
-            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
-        let asset_names = self
-            .db
-            .assets_names
-            .read()
-            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
-        let stations = self
-            .db
-            .stations
-            .read()
-            .map_err(|e| format!("Failed to acquire read lock: {}", e))?;
 
-        let mut results = HashMap::with_capacity(item_ids.len());
+pub fn build_location_chain(
+    &self,
+    asset: &AssetItem,
+    assets: &BTreeMap<ItemId, AssetItem>,
+    assets_names: &BTreeMap<ItemId, String>,
+    stations: &BTreeMap<StationId, Station>,
+    stats: &mut ChainStats,
+    cache: &mut HashMap<i64, (String, String, String)>,
+) -> (String, String, String) {
+    stats.total_calls += 1;
 
-        for item_id in item_ids {
-            if let Some(asset) = assets.get(item_id) {
-                let chain =
-                    self.build_location_chain_with_refs(asset, &assets, &asset_names, &stations);
-                results.insert(*item_id, chain);
-            }
-        }
-
-        Ok(results)
+    if let Some(cached) = cache.get(&asset.location_id) {
+        return cached.clone();
     }
 
-    fn build_location_chain_with_refs(
-        &self,
-        asset: &AssetItem,
-        assets: &BTreeMap<ItemId, AssetItem>,
-        asset_names: &BTreeMap<ItemId, String>,
-        stations: &BTreeMap<StationId, Station>,
-    ) -> (String, String, String) {
-        let mut location_chain = vec![];
-        let mut current_location_id = asset.location_id;
-        let mut current_location_type = asset.location_type.clone();
-        let mut station_name = "Unknown".to_string();
+    let mut location_chain = vec![];
+    let mut current_location_id = asset.location_id;
+    let mut current_location_type = asset.location_type.clone();
+    let mut station_name = "Unknown".to_string();
 
-        if current_location_type == "station" {
-            if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                station_name = station.name.clone();
-            }
-            return (station_name, current_location_type, "Direct".to_string());
+    let debug_item_id = ItemId::from(1049687715530);
+    let is_debug_item = asset.item_id == debug_item_id;
+    if is_debug_item {
+        println!("current location id = {current_location_id}, current location type = {current_location_type}");
+    }
+    if current_location_type == "station" {
+        stats.direct_station += 1;
+        if let Some(station) = stations.get(&(current_location_id as StationId)) {
+            station_name = station.name.clone();
         }
+        let result = (station_name, current_location_type, "Direct".to_string());
+        cache.insert(asset.location_id, result.clone());
+        return result;
+    }
 
-        let mut depth = 0;
-        const MAX_DEPTH: u32 = 10;
-        while depth < MAX_DEPTH {
-            if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
-                let name = asset_names
-                    .get(&parent_asset.item_id)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Container_{}", parent_asset.item_id));
+    let mut depth = 0;
+    const MAX_DEPTH: u32 = 10;
+    
+    while depth < MAX_DEPTH {
+        stats.lookups += 1;
+        if is_debug_item {
+            println!("in while, depth = {depth}");
+        }
+        
+        if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
+            if is_debug_item {
+                println!("parent asset = {parent_asset:?}");
+            }
 
-                location_chain.push(name);
-                current_location_id = parent_asset.location_id;
-                current_location_type = parent_asset.location_type.clone();
+            let name = assets_names
+                .get(&parent_asset.item_id)
+                .cloned()
+                .unwrap_or_else(|| format!("Container_{}", parent_asset.item_id));
 
-                if current_location_type == "station" {
-                    if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                        station_name = station.name.clone();
-                    }
-                    break;
-                }
-            } else {
-                if current_location_type == "station" {
-                    if let Some(station) = stations.get(&(current_location_id as StationId)) {
-                        station_name = station.name.clone();
+            location_chain.push(name);
+            current_location_id = parent_asset.location_id;
+            current_location_type = parent_asset.location_type.clone();
+
+            if current_location_type == "station" {
+                if let Some(station) = stations.get(&(current_location_id as StationId)) {
+                    station_name = station.name.clone();
+                    if is_debug_item {
+                        println!("station name for parent asset = {station_name}");
                     }
                 }
                 break;
             }
-
-            depth += 1;
+        } else {
+            if is_debug_item {
+                println!("no parent asset");
+            }
+            if current_location_type == "station" {
+                if let Some(station) = stations.get(&(current_location_id as StationId)) {
+                    station_name = station.name.clone();
+                }
+            }
+            break;
         }
 
-        location_chain.reverse();
-        let location_name = if location_chain.is_empty() {
-            "Direct".to_string()
-        } else {
-            location_chain.join(" -> ")
-        };
-
-        (station_name, current_location_type, location_name)
+        depth += 1;
     }
+
+    if is_debug_item {
+        println!("location chain = {location_chain:?}");
+    }
+    stats.max_depth = stats.max_depth.max(depth);
+    stats.total_depth += depth;
+    
+    location_chain.reverse();
+    let location_name = if location_chain.is_empty() {
+        "Direct".to_string()
+    } else {
+        location_chain.join(" -> ")
+    };
+
+    let result = (station_name, current_location_type, location_name);
+    cache.insert(asset.location_id, result.clone());
+    result
+}
+
 
     // Getter methods for accessing inner data structures
     pub fn get_all_assets(&self) -> Result<BTreeMap<ItemId, AssetItem>, String> {
@@ -985,7 +966,7 @@ impl CharacterAssetsDb {
 
     pub fn with_assets<R, F>(&self, f: F) -> Result<R, String>
     where
-        F: FnOnce(&BTreeMap<ItemId, AssetItem>) -> R,
+        F: FnOnce(&BTreeMap<ItemId, AssetItem>) -> R
     {
         let assets = self
             .db
@@ -1162,10 +1143,6 @@ impl CharacterAssetsDb {
             .map_err(|_| "Failed to write last_updated_at")?;
         *t = Utc::now();
         Ok(new_items)
-    }
-
-    pub fn build_location_chain(&self, asset: &AssetItem) -> (String, String, String) {
-        self.db.build_location_chain(asset)
     }
 
     pub fn add_mutaplasmid_effects(
