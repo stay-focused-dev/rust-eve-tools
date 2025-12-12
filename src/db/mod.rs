@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_cbor;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::sync::Arc;
 
 
@@ -41,6 +41,32 @@ impl ChainStats {
     }
 }
 
+#[derive(Default)]
+pub struct ChainTimings {
+    pub cache_hit: Duration,
+    pub cache_lookup: Duration,
+    pub asset_lookup: Duration,
+    pub name_lookup: Duration,
+    pub station_lookup: Duration,
+    pub string_ops: Duration,
+    pub arc_creation: Duration,
+    pub total: Duration,
+}
+
+impl ChainTimings {
+    pub fn print_breakdown(&self) {
+        println!("=== Chain Timings Breakdown ===");
+        let total_us = self.total.as_micros() as f64;
+        println!("Total:          {:?} (100.0%)", self.total);
+        println!("  Cache hits:   {:?} ({:.1}%)", self.cache_hit, self.cache_hit.as_micros() as f64 / total_us * 100.0);
+        println!("  Cache lookup: {:?} ({:.1}%)", self.cache_lookup, self.cache_lookup.as_micros() as f64 / total_us * 100.0);
+        println!("  Asset lookup: {:?} ({:.1}%)", self.asset_lookup, self.asset_lookup.as_micros() as f64 / total_us * 100.0);
+        println!("  Name lookup:  {:?} ({:.1}%)", self.name_lookup, self.name_lookup.as_micros() as f64 / total_us * 100.0);
+        println!("  Station lookup:{:?} ({:.1}%)", self.station_lookup, self.station_lookup.as_micros() as f64 / total_us * 100.0);
+        println!("  String ops:   {:?} ({:.1}%)", self.string_ops, self.string_ops.as_micros() as f64 / total_us * 100.0);
+        println!("  Arc creation: {:?} ({:.1}%)", self.arc_creation, self.arc_creation.as_micros() as f64 / total_us * 100.0);
+    }    
+}
 
 pub struct CharacterAssets {
     pub assets: RwLock<BTreeMap<ItemId, AssetItem>>,
@@ -854,6 +880,8 @@ impl CharacterAssetsDb {
     }
 
 
+
+
 pub fn build_location_chain(
     &self,
     asset: &AssetItem,
@@ -862,12 +890,18 @@ pub fn build_location_chain(
     stations: &BTreeMap<StationId, Station>,
     stats: &mut ChainStats,
     cache: &mut HashMap<i64, (Arc<str>, Arc<str>, Arc<str>)>,
+    timings: &mut ChainTimings,
 ) -> (Arc<str>, Arc<str>, Arc<str>) {
+    let total_start = Instant::now();
     stats.total_calls += 1;
 
+    let cache_start = Instant::now();
     if let Some(cached) = cache.get(&asset.location_id) {
+        timings.cache_hit += cache_start.elapsed();
+        timings.total += total_start.elapsed();
         return cached.clone();
     }
+    timings.cache_lookup += cache_start.elapsed();
 
     let mut location_chain = vec![];
     let mut current_location_id = asset.location_id;
@@ -876,15 +910,22 @@ pub fn build_location_chain(
 
     if current_location_type == "station" {
         stats.direct_station += 1;
+        let station_start = Instant::now();
         if let Some(station) = stations.get(&(current_location_id as StationId)) {
             station_name = station.name.clone();
         }
+        timings.station_lookup += station_start.elapsed();
+
+        let arc_start = Instant::now();
         let result = (
             Arc::from(station_name.as_str()), 
             Arc::from(current_location_type.as_str()), 
             Arc::from("Direct")
         );
+        timings.arc_creation += arc_start.elapsed();
+
         cache.insert(asset.location_id, result.clone());
+        timings.total += total_start.elapsed();
         return result;
     }
 
@@ -893,29 +934,38 @@ pub fn build_location_chain(
     
     while depth < MAX_DEPTH {
         stats.lookups += 1;
-        
-        if let Some(parent_asset) = assets.get(&(ItemId::from(current_location_id))) {
 
+        let asset_start = Instant::now();
+        let parent_asset = assets.get(&(ItemId::from(current_location_id)));
+        timings.asset_lookup += asset_start.elapsed();
+        
+        if let Some(parent_asset) = parent_asset {
+            let name_start = Instant::now();
             let name = assets_names
                 .get(&parent_asset.item_id)
                 .cloned()
                 .unwrap_or_else(|| format!("Container_{}", parent_asset.item_id));
+            timings.name_lookup += name_start.elapsed();
 
             location_chain.push(name);
             current_location_id = parent_asset.location_id;
             current_location_type = parent_asset.location_type.clone();
 
             if current_location_type == "station" {
+                let station_start = Instant::now();
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
                 }
+                timings.station_lookup += station_start.elapsed();
                 break;
             }
         } else {
             if current_location_type == "station" {
+                let station_start = Instant::now();
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
                 }
+                timings.station_lookup += station_start.elapsed();
             }
             break;
         }
@@ -926,19 +976,26 @@ pub fn build_location_chain(
     stats.max_depth = stats.max_depth.max(depth);
     stats.total_depth += depth;
     
+    let string_start = Instant::now();
     location_chain.reverse();
     let location_name = if location_chain.is_empty() {
         "Direct".to_string()
     } else {
         location_chain.join(" -> ")
     };
+    timings.string_ops += string_start.elapsed();
 
+    let arc_start = Instant::now();
     let result = (
         Arc::from(station_name.as_str()),
         Arc::from(current_location_type.as_str()),
         Arc::from(location_name.as_str())
     );
+    timings.arc_creation += arc_start.elapsed();
+
     cache.insert(asset.location_id, result.clone());
+    timings.total += total_start.elapsed();
+    
     result
 }
 
