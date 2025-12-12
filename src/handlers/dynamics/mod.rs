@@ -53,9 +53,9 @@ pub struct BaseItemType {
 #[derive(Serialize, Clone)]
 pub struct DynamicItemData {
     item_id: ItemId,
-    station_name: Arc<str>,
-    location_type: Arc<str>,
-    location_name: Arc<str>,
+    station_name: String,
+    location_type: String,
+    location_name: String,
     attributes: Vec<AttributeValue>,
 }
 

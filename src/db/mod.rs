@@ -889,19 +889,19 @@ pub fn build_location_chain(
     assets_names: &BTreeMap<ItemId, String>,
     stations: &BTreeMap<StationId, Station>,
     stats: &mut ChainStats,
-    cache: &mut HashMap<i64, (Arc<str>, Arc<str>, Arc<str>)>,
+    cache: &mut HashMap<i64, (String, String, String)>,
     timings: &mut ChainTimings,
-) -> (Arc<str>, Arc<str>, Arc<str>) {
+) -> (String, String, String) {
     let total_start = Instant::now();
     stats.total_calls += 1;
 
-    let cache_start = Instant::now();
+    // let cache_start = Instant::now();
     if let Some(cached) = cache.get(&asset.location_id) {
-        timings.cache_hit += cache_start.elapsed();
-        timings.total += total_start.elapsed();
+        //timings.cache_hit += cache_start.elapsed();
+        // timings.total += total_start.elapsed();
         return cached.clone();
     }
-    timings.cache_lookup += cache_start.elapsed();
+    // timings.cache_lookup += cache_start.elapsed();
 
     let mut location_chain = vec![];
     let mut current_location_id = asset.location_id;
@@ -914,18 +914,12 @@ pub fn build_location_chain(
         if let Some(station) = stations.get(&(current_location_id as StationId)) {
             station_name = station.name.clone();
         }
-        timings.station_lookup += station_start.elapsed();
+        // timings.station_lookup += station_start.elapsed();
 
-        let arc_start = Instant::now();
-        let result = (
-            Arc::from(station_name.as_str()), 
-            Arc::from(current_location_type.as_str()), 
-            Arc::from("Direct")
-        );
-        timings.arc_creation += arc_start.elapsed();
+        let result = (station_name, current_location_type, "Direct".to_string());
 
         cache.insert(asset.location_id, result.clone());
-        timings.total += total_start.elapsed();
+        // timings.total += total_start.elapsed();
         return result;
     }
 
@@ -937,7 +931,7 @@ pub fn build_location_chain(
 
         let asset_start = Instant::now();
         let parent_asset = assets.get(&(ItemId::from(current_location_id)));
-        timings.asset_lookup += asset_start.elapsed();
+        // timings.asset_lookup += asset_start.elapsed();
         
         if let Some(parent_asset) = parent_asset {
             let name_start = Instant::now();
@@ -945,7 +939,7 @@ pub fn build_location_chain(
                 .get(&parent_asset.item_id)
                 .cloned()
                 .unwrap_or_else(|| format!("Container_{}", parent_asset.item_id));
-            timings.name_lookup += name_start.elapsed();
+            // timings.name_lookup += name_start.elapsed();
 
             location_chain.push(name);
             current_location_id = parent_asset.location_id;
@@ -956,7 +950,7 @@ pub fn build_location_chain(
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
                 }
-                timings.station_lookup += station_start.elapsed();
+                // timings.station_lookup += station_start.elapsed();
                 break;
             }
         } else {
@@ -965,7 +959,7 @@ pub fn build_location_chain(
                 if let Some(station) = stations.get(&(current_location_id as StationId)) {
                     station_name = station.name.clone();
                 }
-                timings.station_lookup += station_start.elapsed();
+                // timings.station_lookup += station_start.elapsed();
             }
             break;
         }
@@ -983,19 +977,13 @@ pub fn build_location_chain(
     } else {
         location_chain.join(" -> ")
     };
-    timings.string_ops += string_start.elapsed();
+    // timings.string_ops += string_start.elapsed();
 
-    let arc_start = Instant::now();
-    let result = (
-        Arc::from(station_name.as_str()),
-        Arc::from(current_location_type.as_str()),
-        Arc::from(location_name.as_str())
-    );
-    timings.arc_creation += arc_start.elapsed();
+    let result = (station_name, current_location_type, location_name);
 
     cache.insert(asset.location_id, result.clone());
-    timings.total += total_start.elapsed();
-    
+    // timings.total += total_start.elapsed();
+
     result
 }
 
