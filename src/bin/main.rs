@@ -183,32 +183,40 @@ pub async fn start_market_orders_resolution_system(context: Arc<AppContext>) -> 
 async fn dynamics_report_handler(State(state): State<AppState>) -> impl IntoResponse {
     let context = &state.context;
 
-    let report = handlers::dynamics::DynamicsReport::new(context).await;
-
-    // Get the stored dynamics report from character_assets_db
-    match serde_json::to_string(&report) {
-        Ok(report_json) => {
-            // Return JSON response with proper content type
-            Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/json")
-                .body(report_json)
-                .unwrap()
-        }
+    let report = match handlers::dynamics::DynamicsReport::new(context).await {
+        Ok(report) => report,
         Err(e) => {
-            // Return error if failed to read report
-            Response::builder()
+            return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
                 .body(
                     serde_json::json!({
-                        "error": format!("Failed to read dynamics report: {}", e),
+                        "error": format!("Failed to generate dynamics report: {}", e),
                         "status": "error"
                     })
                     .to_string(),
                 )
-                .unwrap()
+                .unwrap();
         }
+    };
+
+    match serde_json::to_string(&report) {
+        Ok(report_json) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(report_json)
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "error": format!("Failed to serialize dynamics report: {}", e),
+                    "status": "error"
+                })
+                .to_string(),
+            )
+            .unwrap(),
     }
 }
 
